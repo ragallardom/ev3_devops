@@ -88,5 +88,5 @@ jobs:
         with:
           task-definition: ${{ steps.render-frontend.outputs.task-definition }}
           service: taskflow-service
-          cluster: taskflow-cluster
+          cluster: taskflow-cluster-
           wait-for-service-stability: true
