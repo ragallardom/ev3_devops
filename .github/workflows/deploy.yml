@@ -1,0 +1,92 @@
+name: CI/CD Pipeline - Deploy to AWS ECS Fargate
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Build & Deploy to ECS
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout repository
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. Configure AWS Credentials (includes session token for AWS Academy)
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }} # Required for AWS Academy Labs
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # 3. Log in to Amazon ECR
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 4. Build, tag, and push Backend Image
+      - name: Build and Push Backend Image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: taskflow-backend
+          IMAGE_TAG: latest
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./backend
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "backend_image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+
+      # 5. Build, tag, and push Frontend Image
+      - name: Build and Push Frontend Image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: taskflow-frontend
+          IMAGE_TAG: latest
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./frontend
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "frontend_image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+
+      # 6. Render Task Definition with ECR Images
+      - name: Render Backend Container in Task Definition
+        id: render-backend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: .aws/task-definition.json
+          container-name: backend
+          image: ${{ steps.login-ecr.outputs.registry }}/taskflow-backend:latest
+
+      - name: Render Frontend Container in Task Definition
+        id: render-frontend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-backend.outputs.task-definition }}
+          container-name: frontend
+          image: ${{ steps.login-ecr.outputs.registry }}/taskflow-frontend:latest
+
+      # 7. Substitute AWS Account & Region placeholders in Task Definition file
+      - name: Substitute AWS placeholders
+        env:
+          AWS_ACCOUNT_ID: ${{ steps.login-ecr.outputs.registry }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+        run: |
+          # The registry is format <account_id>.dkr.ecr.<region>.amazonaws.com
+          # Extract Account ID from the registry
+          ACCOUNT_ID=$(echo $AWS_ACCOUNT_ID | cut -d'.' -f1)
+          
+          # Replace placeholder template tokens in the rendered definition
+          sed -i "s/<AWS_ACCOUNT_ID>/$ACCOUNT_ID/g" ${{ steps.render-frontend.outputs.task-definition }}
+          sed -i "s/<AWS_REGION>/$AWS_REGION/g" ${{ steps.render-frontend.outputs.task-definition }}
+
+      # 8. Deploy to Amazon ECS Fargate Service
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-frontend.outputs.task-definition }}
+          service: taskflow-service
+          cluster: taskflow-cluster
+          wait-for-service-stability: true
