@@ -1,4 +1,4 @@
-# Taskflow - Gestor de Tareas Fullstack (Dockerizado) 
+# Taskflow - Gestor de Tareas Fullstack (Dockerizado)  
 
 Taskflow es una aplicación web full-stack premium para la gestión de tareas estilo Kanban. Cuenta con un diseño estético moderno y responsivo con soporte para métricas y transiciones fluidas.
 
